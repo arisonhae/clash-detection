@@ -2,3 +2,4 @@ streamlit
 pandas
 google-generativeai
 markdown
+openpyxl
