@@ -20,7 +20,7 @@ st.set_page_config(
 st.title("🧱 AI Clash Agent (CI Ranking + Gemini Report)")
 
 st.markdown("""
-업로드한 Clash CSV를 기반으로 **간섭 중요도(CI)**를 계산하고,
+업로드한 Clash CSV/XLSX를 기반으로 **간섭 중요도(CI)**를 계산하고,
 - 우선 수정해야 할 간섭 순위(Rank)를 산출합니다.  
 - Top 10 + 판정불가 항목을 **Gemini 결과보고서**로 요약합니다.  
 - 아래 챗봇에서 결과 관련 질문도 할 수 있습니다.
@@ -128,18 +128,28 @@ def compute_ci(
     - N: 동일 MEP 부재가 발생시키는 간섭 개수
     - R: 층별 간섭 밀도 (해당 층 간섭 수 / 최다 층 간섭 수)
     - U: 용도 계수 (현재 1.0 고정)
+
+    입력 데이터는 다음 형식을 가정한다.
+    - 간섭 이름
+    - 거리
+    - 항목 ID 1 (MEP)
+    - 도면층 (MEP 층)
+    - 항목 유형1 (MEP 타입)
+    - 항목 ID 2 (ST)
+    - 도면층.1 (ST 층)
+    - 항목 유형2 (ST 타입)
     """
     df = df.copy()
 
-    # 1) 컬럼 이름 (너가 쓰는 파일 형식에 맞춤)
-    col_clash_name = "간섭 이름"
-    col_distance = "거리"
-    col_mep_id = "MEP 항목 ID"
-    col_mep_floor = "MEP 도면층"
-    col_mep_type_raw = "MEP 항목 유형"
-    col_st_id = "ST 항목 ID"
-    col_st_floor = "ST 도면층"
-    col_st_type_raw = "ST 항목 유형"
+    # 1) 실제 파일 컬럼 이름 (데이터 정리본.xlsx 형식 고정)
+    col_clash_name   = "간섭 이름"
+    col_distance     = "거리"
+    col_mep_id       = "항목 ID 1"
+    col_mep_floor    = "도면층"
+    col_mep_type_raw = "항목 유형1"
+    col_st_id        = "항목 ID 2"
+    col_st_floor     = "도면층.1"
+    col_st_type_raw  = "항목 유형2"
 
     # 필수 컬럼 체크
     required_cols = [
@@ -197,7 +207,15 @@ def compute_ci(
     mask_unknown = (df["MEP_Type"] == "OtherMEP") | (df["ST_Type"] == "OtherStruct")
     df.loc[mask_unknown, "판정결과"] = "판정불가"
 
-    # 11) 정렬 + Rank
+    # 11) 보고서/표시에 쓸 alias 컬럼 (사람이 보기 좋은 이름)
+    df["MEP 항목 ID"]   = df[col_mep_id]
+    df["MEP 도면층"]     = df[col_mep_floor]
+    df["MEP 항목 유형"]  = df[col_mep_type_raw]
+    df["ST 항목 ID"]    = df[col_st_id]
+    df["ST 도면층"]      = df[col_st_floor]
+    df["ST 항목 유형"]   = df[col_st_type_raw]
+
+    # 12) 정렬 + Rank
     df = df.sort_values("CI", ascending=False).reset_index(drop=True)
     df["CI_rank"] = df["CI"].rank(method="min", ascending=False).astype(int)
 
@@ -240,8 +258,10 @@ def generate_report_gemini(model, df_ci: pd.DataFrame) -> str:
 
     # 보고서에 넘길 최소 컬럼만 정리
     cols_for_report = [
-        "CI_rank", "간섭 이름", "MEP 항목 ID", "ST 항목 ID",
-        "MEP_Type", "ST_Type", "판정결과", "P", "WS", "WMEP", "N", "R", "CI"
+        "CI_rank", "간섭 이름",
+        "MEP 항목 ID", "ST 항목 ID",
+        "MEP_Type", "ST_Type",
+        "판정결과", "P", "WS", "WMEP", "N", "R", "CI"
     ]
     cols_for_report = [c for c in cols_for_report if c in top10.columns]
     top10_small = top10[cols_for_report]
@@ -332,7 +352,7 @@ def chat_with_gemini(model, user_msg: str, df_ci: pd.DataFrame | None):
 st.sidebar.header("📂 입력 데이터 업로드")
 
 uploaded_file = st.sidebar.file_uploader(
-    "Clash 결과 CSV 파일을 업로드하세요",
+    "Clash 결과 CSV/XLSX 파일을 업로드하세요",
     type=["csv", "xlsx"]
 )
 
@@ -345,7 +365,7 @@ p_min_threshold = st.sidebar.number_input(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("📌 CSV 컬럼 예시: `간섭 이름, 거리, MEP 항목 ID, MEP 도면층, MEP 항목 유형, ST 항목 ID, ST 도면층, ST 항목 유형`")
+st.sidebar.markdown("📌 파일 형식 예시: `간섭 이름, 거리, 간섭 지점, 항목 ID 1, 도면층, 항목 유형1, 항목 ID 2, 도면층.1, 항목 유형2`")
 
 
 df_ci = None
@@ -358,7 +378,7 @@ if uploaded_file is not None:
         if uploaded_file.name.lower().endswith(".csv"):
             df_raw = pd.read_csv(uploaded_file, encoding="utf-8-sig")
         else:
-            df_raw = pd.read_excel(uploaded_file)
+            df_raw = pd.read_excel(uploaded_file)  # openpyxl이 requirements에 들어 있어야 함
     except Exception as e:
         st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
         df_raw = None
@@ -413,7 +433,7 @@ if model is None:
     st.warning("Gemini 모델이 초기화되지 않았습니다. API 키 설정을 먼저 해주세요.")
 else:
     if df_ci is None or df_ci.empty:
-        st.info("먼저 CSV를 업로드하고 CI를 계산해야 결과보고서를 생성할 수 있습니다.")
+        st.info("먼저 CSV/XLSX를 업로드하고 CI를 계산해야 결과보고서를 생성할 수 있습니다.")
     else:
         if st.button("📄 Gemini로 결과보고서 생성"):
             with st.spinner("Gemini가 보고서를 작성하는 중입니다..."):
