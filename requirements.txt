@@ -3,3 +3,4 @@ pandas
 google-generativeai
 markdown
 openpyxl
+tabulate
