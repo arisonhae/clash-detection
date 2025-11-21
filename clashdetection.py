@@ -1,4 +1,4 @@
-# app.py
+# clashdetection.py
 # Streamlit 기반 Clash 우선순위 + Gemini 결과보고서 + 챗봇
 
 import os
