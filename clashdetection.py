@@ -227,28 +227,27 @@ def compute_ci(
 # ======================================
 
 def init_gemini():
-    api_key = st.secrets["google"]["api_key"]  # get() 말고 이렇게 확실하게
+    api_key = st.secrets["google"]["api_key"]
     if not api_key:
         st.warning("⚠️ Gemini API 키가 설정되지 않았습니다. secrets.toml을 확인해주세요.")
         return None
 
-    # 키 앞부분만 살짝 찍어서, 정말 secrets에서 제대로 읽는지 확인 (노출 방지 위해 일부만)
+    # 키 앞부분 확인용 (잘 읽히는지 체크)
     st.sidebar.markdown(f"🔑 Gemini key prefix: `{api_key[:6]}***`")
 
     genai.configure(api_key=api_key)
 
-    # 여기서 아주 간단한 테스트를 해보자
+    # ----- 연결 테스트 -----
     try:
-        test_model = genai.GenerativeModel("gemini-1.5-flash")
+        test_model = genai.GenerativeModel("gemini-pro")  # 🔁 여기만 변경
         _ = test_model.generate_content("테스트입니다. 한 줄만 답해줘.")
         st.sidebar.success("✅ Gemini 연결 테스트 성공")
     except Exception as e:
         st.sidebar.error(f"❌ Gemini 테스트 실패: {e}")
         return None
 
-    # 실제 사용할 모델
-    return genai.GenerativeModel("gemini-1.5-flash")
-
+    # 실제 사용할 모델도 동일하게
+    return genai.GenerativeModel("gemini-pro")  # 🔁 여기도 변경
 # ======================================
 # 5. Gemini 결과보고서 생성
 # ======================================
