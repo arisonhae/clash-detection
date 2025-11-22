@@ -232,18 +232,20 @@ GEMINI_MODEL_CANDIDATES = [
 
 
 def init_gemini():
-    """secrets.toml의 key를 사용해 Gemini 모델을 초기화."""
+    """Streamlit secrets의 GEMINI_API_KEY를 사용해 Gemini 모델을 초기화."""
+    # 🔑 secrets에서 평평한 키로 읽기
+    api_key = None
     try:
-        api_key = st.secrets["google"]["api_key"]
+        api_key = st.secrets.get("GEMINI_API_KEY")
     except Exception:
         api_key = None
 
     if not api_key:
-        st.sidebar.error("⚠️ Gemini API 키가 설정되지 않았습니다. `.streamlit/secrets.toml`을 확인해주세요.")
+        st.sidebar.error("⚠️ GEMINI_API_KEY가 설정되지 않았습니다. Secrets 설정을 확인해주세요.")
         return None
 
     # 디버그용 (키 앞부분 & 라이브러리 버전 표시)
-    st.sidebar.markdown(f"🔑 Gemini key prefix: `{api_key[:6]}***`")
+    st.sidebar.markdown(f"🔑 Gemini key prefix: `{str(api_key)[:6]}***`")
     st.sidebar.markdown(f"📦 google-generativeai 버전: `{genai.__version__}`")
 
     # 설정
