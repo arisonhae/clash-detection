@@ -1,8 +1,6 @@
 # clashdetection.py
 # Streamlit 기반 Clash 우선순위 + Gemini 결과보고서 + 챗봇
 
-import os
-import io
 import pandas as pd
 import streamlit as st
 import google.generativeai as genai
@@ -226,46 +224,46 @@ def compute_ci(
 # 4. Gemini 설정 함수
 # ======================================
 
+GEMINI_MODEL_CANDIDATES = [
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+    "gemini-pro",
+]
+
+
 def init_gemini():
-    # 1) 키 읽기
-    api_key = st.secrets["google"]["api_key"]
+    """secrets.toml의 key를 사용해 Gemini 모델을 초기화."""
+    try:
+        api_key = st.secrets["google"]["api_key"]
+    except Exception:
+        api_key = None
+
     if not api_key:
-        st.warning("⚠️ Gemini API 키가 설정되지 않았습니다. secrets.toml을 확인해주세요.")
+        st.sidebar.error("⚠️ Gemini API 키가 설정되지 않았습니다. `.streamlit/secrets.toml`을 확인해주세요.")
         return None
 
     # 디버그용 (키 앞부분 & 라이브러리 버전 표시)
     st.sidebar.markdown(f"🔑 Gemini key prefix: `{api_key[:6]}***`")
     st.sidebar.markdown(f"📦 google-generativeai 버전: `{genai.__version__}`")
 
-    # 2) 설정 (엔드포인트 명시)
-    genai.configure(
-        api_key=api_key,
-        client_options={"api_endpoint": "https://generativelanguage.googleapis.com"}
-    )
+    # 설정
+    genai.configure(api_key=api_key)
 
-    # 3) 아주 간단한 테스트 – 먼저 모델 리스트를 불러봄
-    try:
-        models = list(genai.list_models())
-        # 일부 모델 이름 사이드바에 찍어보기
-        names = [m.name for m in models[:5]]
-        st.sidebar.markdown("✅ 사용가능 모델 예시:")
-        for n in names:
-            st.sidebar.markdown(f"- `{n}`")
-    except Exception as e:
-        st.sidebar.error(f"❌ ListModels 호출 실패: {e}")
-        return None
+    last_error = None
+    for name in GEMINI_MODEL_CANDIDATES:
+        try:
+            test_model = genai.GenerativeModel(name)
+            _ = test_model.generate_content("테스트입니다. 한 줄만 답해줘.")
+            st.sidebar.success(f"✅ Gemini 연결 성공 (사용 모델: `{name}`)")
+            st.session_state["gemini_model_name"] = name
+            return test_model  # 이 인스턴스를 그대로 사용
+        except Exception as e:
+            last_error = e
 
-    # 4) 실제 사용할 모델 테스트 (텍스트 전용 모델)
-    try:
-        test_model = genai.GenerativeModel("gemini-pro")   # 여기서 에러 나는지 확인
-        _ = test_model.generate_content("테스트입니다. 한 줄만 답해줘.")
-        st.sidebar.success("✅ Gemini 연결 테스트 성공")
-    except Exception as e:
-        st.sidebar.error(f"❌ Gemini 테스트 실패: {e}")
-        return None
+    st.sidebar.error(f"❌ Gemini 모델 초기화 실패: {last_error}")
+    return None
 
-    # 5) 실제로 쓸 모델 리턴
-    return genai.GenerativeModel("gemini-pro")
+
 # ======================================
 # 5. Gemini 결과보고서 생성
 # ======================================
@@ -388,8 +386,10 @@ p_min_threshold = st.sidebar.number_input(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("📌 파일 형식 예시: `간섭 이름, 거리, 간섭 지점, 항목 ID 1, 도면층, 항목 유형1, 항목 ID 2, 도면층.1, 항목 유형2`")
-
+st.sidebar.markdown(
+    "📌 파일 형식 예시: `간섭 이름, 거리, 간섭 지점, 항목 ID 1, 도면층, 항목 유형1, "
+    "항목 ID 2, 도면층.1, 항목 유형2`"
+)
 
 df_ci = None
 
@@ -401,7 +401,7 @@ if uploaded_file is not None:
         if uploaded_file.name.lower().endswith(".csv"):
             df_raw = pd.read_csv(uploaded_file, encoding="utf-8-sig")
         else:
-            df_raw = pd.read_excel(uploaded_file)  # openpyxl이 requirements에 들어 있어야 함
+            df_raw = pd.read_excel(uploaded_file)  # openpyxl 필요
     except Exception as e:
         st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
         df_raw = None
@@ -489,4 +489,3 @@ else:
             answer = chat_with_gemini(model, user_input, df_ci)
         st.session_state["chat_history"].append({"role": "assistant", "content": answer})
         st.experimental_rerun()
-
