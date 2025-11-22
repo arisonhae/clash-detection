@@ -227,27 +227,45 @@ def compute_ci(
 # ======================================
 
 def init_gemini():
+    # 1) 키 읽기
     api_key = st.secrets["google"]["api_key"]
     if not api_key:
         st.warning("⚠️ Gemini API 키가 설정되지 않았습니다. secrets.toml을 확인해주세요.")
         return None
 
-    # 키 앞부분 확인용 (잘 읽히는지 체크)
+    # 디버그용 (키 앞부분 & 라이브러리 버전 표시)
     st.sidebar.markdown(f"🔑 Gemini key prefix: `{api_key[:6]}***`")
+    st.sidebar.markdown(f"📦 google-generativeai 버전: `{genai.__version__}`")
 
-    genai.configure(api_key=api_key)
+    # 2) 설정 (엔드포인트 명시)
+    genai.configure(
+        api_key=api_key,
+        client_options={"api_endpoint": "https://generativelanguage.googleapis.com"}
+    )
 
-    # ----- 연결 테스트 -----
+    # 3) 아주 간단한 테스트 – 먼저 모델 리스트를 불러봄
     try:
-        test_model = genai.GenerativeModel("gemini-pro")  # 🔁 여기만 변경
+        models = list(genai.list_models())
+        # 일부 모델 이름 사이드바에 찍어보기
+        names = [m.name for m in models[:5]]
+        st.sidebar.markdown("✅ 사용가능 모델 예시:")
+        for n in names:
+            st.sidebar.markdown(f"- `{n}`")
+    except Exception as e:
+        st.sidebar.error(f"❌ ListModels 호출 실패: {e}")
+        return None
+
+    # 4) 실제 사용할 모델 테스트 (텍스트 전용 모델)
+    try:
+        test_model = genai.GenerativeModel("gemini-pro")   # 여기서 에러 나는지 확인
         _ = test_model.generate_content("테스트입니다. 한 줄만 답해줘.")
         st.sidebar.success("✅ Gemini 연결 테스트 성공")
     except Exception as e:
         st.sidebar.error(f"❌ Gemini 테스트 실패: {e}")
         return None
 
-    # 실제 사용할 모델도 동일하게
-    return genai.GenerativeModel("gemini-pro")  # 🔁 여기도 변경
+    # 5) 실제로 쓸 모델 리턴
+    return genai.GenerativeModel("gemini-pro")
 # ======================================
 # 5. Gemini 결과보고서 생성
 # ======================================
