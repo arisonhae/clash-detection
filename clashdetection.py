@@ -564,7 +564,7 @@ else:
 
 # ---------- 챗봇 ----------
 st.markdown("---")
-st.subheader("💬 Gemini 챗봇 (결과 관련 질문)")
+st.subheader("💬 Gemini 챗봇 ")
 
 init_chat_state()
 
