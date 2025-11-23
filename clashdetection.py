@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 import google.generativeai as genai
 
+
 # ======================================
 # 0. 기본 설정
 # ======================================
@@ -12,17 +13,20 @@ import google.generativeai as genai
 st.set_page_config(
     page_title="AI Clash Agent (CI Ranking)",
     page_icon="🧱",
-    layout="wide"
+    layout="wide",
 )
 
 st.title("🧱 AI Clash Agent (CI Ranking + Gemini Report)")
 
-st.markdown("""
+st.markdown(
+    """
 업로드한 Clash CSV/XLSX를 기반으로 **간섭 중요도(CI)**를 계산하고,
+
 - 우선 수정해야 할 간섭 순위(Rank)를 산출합니다.  
 - Top 10 + 판정불가 항목을 **Gemini 결과보고서**로 요약합니다.  
 - 아래 챗봇에서 결과 관련 질문도 할 수 있습니다.
-""")
+"""
+)
 
 
 # ======================================
@@ -116,7 +120,7 @@ def w_mep_from_type(mep_type: str) -> float:
 def compute_ci(
     df: pd.DataFrame,
     u_use: float = 1.0,
-    p_min_threshold: float = 0.0
+    p_min_threshold: float = 0.0,
 ) -> pd.DataFrame:
     """
     CI = P × WS × WMEP × N × R × U
@@ -140,20 +144,25 @@ def compute_ci(
     df = df.copy()
 
     # 1) 실제 파일 컬럼 이름 (데이터 정리본.xlsx 형식 고정)
-    col_clash_name   = "간섭 이름"
-    col_distance     = "거리"
-    col_mep_id       = "항목 ID 1"
-    col_mep_floor    = "도면층"
+    col_clash_name = "간섭 이름"
+    col_distance = "거리"
+    col_mep_id = "항목 ID 1"
+    col_mep_floor = "도면층"
     col_mep_type_raw = "항목 유형1"
-    col_st_id        = "항목 ID 2"
-    col_st_floor     = "도면층.1"
-    col_st_type_raw  = "항목 유형2"
+    col_st_id = "항목 ID 2"
+    col_st_floor = "도면층.1"
+    col_st_type_raw = "항목 유형2"
 
     # 필수 컬럼 체크
     required_cols = [
-        col_clash_name, col_distance,
-        col_mep_id, col_mep_floor, col_mep_type_raw,
-        col_st_id, col_st_floor, col_st_type_raw
+        col_clash_name,
+        col_distance,
+        col_mep_id,
+        col_mep_floor,
+        col_mep_type_raw,
+        col_st_id,
+        col_st_floor,
+        col_st_type_raw,
     ]
     for c in required_cols:
         if c not in df.columns:
@@ -173,16 +182,12 @@ def compute_ci(
 
     # 5) N: 동일 MEP ID가 만드는 간섭 개수
     df["N"] = (
-        df.groupby(col_mep_id)[col_clash_name]
-        .transform("count")
-        .astype(float)
+        df.groupby(col_mep_id)[col_clash_name].transform("count").astype(float)
     )
 
     # 6) R: 층별 간섭 수 비율 (해당 층 간섭 / 최다 층 간섭)
     floor_counts = (
-        df.groupby(col_mep_floor)[col_clash_name]
-        .transform("count")
-        .astype(float)
+        df.groupby(col_mep_floor)[col_clash_name].transform("count").astype(float)
     )
     max_floor_count = floor_counts.max() if floor_counts.max() > 0 else 1.0
     df["R"] = floor_counts / max_floor_count
@@ -206,12 +211,12 @@ def compute_ci(
     df.loc[mask_unknown, "판정결과"] = "판정불가"
 
     # 11) 보고서/표시에 쓸 alias 컬럼 (사람이 보기 좋은 이름)
-    df["MEP 항목 ID"]   = df[col_mep_id]
-    df["MEP 도면층"]     = df[col_mep_floor]
-    df["MEP 항목 유형"]  = df[col_mep_type_raw]
-    df["ST 항목 ID"]    = df[col_st_id]
-    df["ST 도면층"]      = df[col_st_floor]
-    df["ST 항목 유형"]   = df[col_st_type_raw]
+    df["MEP 항목 ID"] = df[col_mep_id]
+    df["MEP 도면층"] = df[col_mep_floor]
+    df["MEP 항목 유형"] = df[col_mep_type_raw]
+    df["ST 항목 ID"] = df[col_st_id]
+    df["ST 도면층"] = df[col_st_floor]
+    df["ST 항목 유형"] = df[col_st_type_raw]
 
     # 12) 정렬 + Rank
     df = df.sort_values("CI", ascending=False).reset_index(drop=True)
@@ -224,41 +229,38 @@ def compute_ci(
 # 4. Gemini 설정 함수
 # ======================================
 
-GEMINI_MODEL_CANDIDATES = [
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
-    "gemini-pro",
-]
+GEMINI_MODEL_NAME = "gemini-1.5-flash"  # 한 모델만 사용 (안정적)
 
 
 def init_gemini():
-    """Secrets에 저장된 GEMINI_API_KEY를 사용해 Gemini 모델을 초기화."""
-    api_key = st.secrets.get("GEMINI_API_KEY", None)
+    """Secrets의 GEMINI_API_KEY를 사용해 Gemini 모델을 초기화."""
+    api_key = None
+    # 1) 새 형식(GEMINI_API_KEY) 먼저 확인
+    if "GEMINI_API_KEY" in st.secrets:
+        api_key = st.secrets["GEMINI_API_KEY"]
+    # 2) 혹시 예전 형식([google].api_key)이 남아 있을 수도 있으니 보조 체크
+    elif "google" in st.secrets and "api_key" in st.secrets["google"]:
+        api_key = st.secrets["google"]["api_key"]
 
     if not api_key:
         st.sidebar.error("⚠️ GEMINI_API_KEY가 설정되지 않았습니다. Secrets를 확인해주세요.")
         return None
 
-    # 디버그용 (키 앞부분 & 라이브러리 버전 표시)
     st.sidebar.markdown(f"🔑 Gemini key prefix: `{api_key[:6]}***`")
     st.sidebar.markdown(f"📦 google-generativeai 버전: `{genai.__version__}`")
 
-    # 설정
+    # 라이브러리 설정
     genai.configure(api_key=api_key)
 
-    last_error = None
-    for name in GEMINI_MODEL_CANDIDATES:
-        try:
-            test_model = genai.GenerativeModel(name)
-            _ = test_model.generate_content("테스트입니다. 한 줄만 답해줘.")
-            st.sidebar.success(f"✅ Gemini 연결 성공 (사용 모델: `{name}`)")
-            st.session_state["gemini_model_name"] = name
-            return test_model  # 이 인스턴스를 그대로 사용
-        except Exception as e:
-            last_error = e
-
-    st.sidebar.error(f"❌ Gemini 모델 초기화 실패: {last_error}")
-    return None
+    try:
+        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+        # 간단한 테스트 호출 (실패하면 except로)
+        _ = model.generate_content("연결 테스트 한 줄만 답해줘.")
+        st.sidebar.success(f"✅ Gemini 연결 성공 (사용 모델: `{GEMINI_MODEL_NAME}`)")
+        return model
+    except Exception as e:
+        st.sidebar.error(f"❌ Gemini 모델 초기화 실패: {e}")
+        return None
 
 
 # ======================================
@@ -276,10 +278,19 @@ def generate_report_gemini(model, df_ci: pd.DataFrame) -> str:
 
     # 보고서에 넘길 최소 컬럼만 정리
     cols_for_report = [
-        "CI_rank", "간섭 이름",
-        "MEP 항목 ID", "ST 항목 ID",
-        "MEP_Type", "ST_Type",
-        "판정결과", "P", "WS", "WMEP", "N", "R", "CI"
+        "CI_rank",
+        "간섭 이름",
+        "MEP 항목 ID",
+        "ST 항목 ID",
+        "MEP_Type",
+        "ST_Type",
+        "판정결과",
+        "P",
+        "WS",
+        "WMEP",
+        "N",
+        "R",
+        "CI",
     ]
     cols_for_report = [c for c in cols_for_report if c in top10.columns]
     top10_small = top10[cols_for_report]
@@ -371,7 +382,7 @@ st.sidebar.header("📂 입력 데이터 업로드")
 
 uploaded_file = st.sidebar.file_uploader(
     "Clash 결과 CSV/XLSX 파일을 업로드하세요",
-    type=["csv", "xlsx"]
+    type=["csv", "xlsx"],
 )
 
 p_min_threshold = st.sidebar.number_input(
@@ -379,7 +390,7 @@ p_min_threshold = st.sidebar.number_input(
     min_value=0.0,
     max_value=1000.0,
     value=0.0,
-    step=1.0
+    step=1.0,
 )
 
 st.sidebar.markdown("---")
@@ -415,10 +426,19 @@ if uploaded_file is not None:
             # 상위 20개 표시
             st.markdown("**상위 20개 간섭 (CI 기준 내림차순)**")
             show_cols = [
-                "CI_rank", "간섭 이름",
-                "MEP 항목 ID", "ST 항목 ID",
-                "MEP_Type", "ST_Type",
-                "판정결과", "P", "WS", "WMEP", "N", "R", "CI"
+                "CI_rank",
+                "간섭 이름",
+                "MEP 항목 ID",
+                "ST 항목 ID",
+                "MEP_Type",
+                "ST_Type",
+                "판정결과",
+                "P",
+                "WS",
+                "WMEP",
+                "N",
+                "R",
+                "CI",
             ]
             show_cols = [c for c in show_cols if c in df_ci.columns]
             st.dataframe(df_ci[show_cols].head(20), use_container_width=True)
@@ -457,12 +477,9 @@ else:
     else:
         if st.button("📄 Gemini로 결과보고서 생성"):
             with st.spinner("Gemini가 보고서를 작성하는 중입니다..."):
-                try:
-                    report_text = generate_report_gemini(model, df_ci)
-                    st.markdown("#### 📄 결과보고서 (AI 생성)")
-                    st.write(report_text)
-                except Exception as e:
-                    st.error(f"Gemini 보고서 생성 중 오류가 발생했습니다: {e}")
+                report_text = generate_report_gemini(model, df_ci)
+            st.markdown("#### 📄 결과보고서 (AI 생성)")
+            st.write(report_text)
 
 
 # ---------- 챗봇 ----------
@@ -485,12 +502,7 @@ else:
 
     if user_input:
         st.session_state["chat_history"].append({"role": "user", "content": user_input})
-        try:
-            with st.spinner("AI가 답변을 작성 중입니다..."):
-                answer = chat_with_gemini(model, user_input, df_ci)
-            st.session_state["chat_history"].append({"role": "assistant", "content": answer})
-        except Exception as e:
-            st.error(f"챗봇 호출 중 오류가 발생했습니다: {e}")
-        # 🔴 여기! experimental_rerun 대신 rerun 사용
-        st.rerun()
-
+        with st.spinner("AI가 답변을 작성 중입니다..."):
+            answer = chat_with_gemini(model, user_input, df_ci)
+        st.session_state["chat_history"].append({"role": "assistant", "content": answer})
+        # rerun 없이도 새 메시지는 바로 위에 표시되므로 굳이 st.rerun()을 호출하지 않음
