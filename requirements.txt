@@ -1,6 +1,6 @@
 streamlit
 pandas
-google-generativeai
-markdown
+google-generativeai==0.7.2
 openpyxl
 tabulate
+markdown
