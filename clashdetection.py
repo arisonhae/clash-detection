@@ -22,7 +22,30 @@ st.markdown(
 업로드한 Clash CSV/XLSX를 기반으로 **간섭 중요도(CI)**를 계산하고,
 - 우선 수정해야 할 간섭 순위(Rank)를 산출합니다.  
 - Top 10 + 판정불가 항목을 **Gemini 결과보고서**로 요약합니다.  
-- 아래 챗봇에서 결과 관련 질문도 할 수 있습니다.
+- 결과 관련 질문을 할 수 있습니다.
+"""
+)
+
+st.markdown(
+    """
+### 🔎 CI 계산 공식 및 의미
+
+이 웹앱은 Bitaraf et al. (Buildings, 2024)의 **개선된 BIM 기반 간섭 우선순위 산정 방법**을 참고하여  
+아래와 같은 CI(Clash Importance) 공식을 사용합니다.
+
+> **CI = P × WS × WMEP × N × R × U**
+
+- **P** : Clash 결과에서 가져온 **간섭 깊이(침투량)**  
+- **WS** : 기둥, 보, 기초, 전단벽, 슬래브 등 **구조 요소 가중치**  
+- **WMEP** : 덕트, 설비, 배관, 전기설비 등 **MEP 요소 가중치**  
+  - WS, WMEP 값의 구조는 논문에서 제시한 **BWM(Best–Worst Method) 기반 가중치 체계**를 따릅니다.
+- **N** : 동일 MEP 요소가 발생시키는 **간섭 개수**  
+- **R** : 층별 간섭 밀도 비율(해당 층 간섭 수 / 최다 층 간섭 수)  
+- **U** : 용도 계수 (현재는 1.0으로 고정)
+
+논문의 기본 공식을 그대로 사용하되,  
+**N · R · U 세 변수의 구체적인 정의와 계산 방식은 이 웹앱에서 업로드한 Clash 테이블만으로 계산할 수 있도록  
+독자적으로 단순화·재구성한 버전**이라는 점을 함께 참고해 주세요.
 """
 )
 
@@ -430,6 +453,10 @@ def chat_with_gemini(model, user_msg: str, df_ci: pd.DataFrame | None):
 # 7. 메인 UI
 # ======================================
 
+# 세션 상태 초기값
+if "report_text" not in st.session_state:
+    st.session_state["report_text"] = None
+
 st.sidebar.header("📂 입력 데이터 업로드")
 
 uploaded_file = st.sidebar.file_uploader(
@@ -454,7 +481,7 @@ df_ci = None
 
 # ---------- 파일 처리 & CI 계산 ----------
 if uploaded_file is not None:
-    st.subheader("1️⃣ 업로드 데이터 미리보기")
+    st.subheader("📁 업로드 데이터 미리보기")
 
     try:
         if uploaded_file.name.lower().endswith(".csv"):
@@ -468,11 +495,14 @@ if uploaded_file is not None:
     if df_raw is not None:
         st.dataframe(df_raw.head(20), use_container_width=True)
 
-        st.subheader("2️⃣ CI 계산 및 Rank 산출")
+        st.subheader("🧮 CI 계산 및 Rank 산출")
 
         try:
             df_ci = compute_ci(df_raw, u_use=1.0, p_min_threshold=p_min_threshold)
             st.success("✅ CI 계산 및 Rank 산출이 완료되었습니다.")
+
+            # 새로운 파일/계산이 이루어졌으므로 보고서 캐시 초기화
+            st.session_state["report_text"] = None
 
             # 상위 20개 표시
             st.markdown("**상위 20개 간섭 (CI 기준 내림차순)**")
@@ -516,44 +546,51 @@ model = init_gemini()
 
 # ---------- 결과보고서 ----------
 st.markdown("---")
-st.subheader("3️⃣ Gemini 결과보고서 생성 (Top 10 + 판정불가 포함)")
+st.subheader("📊 Gemini 결과보고서 (Top 10 + 판정불가 포함)")
 
 if model is None:
     st.warning("Gemini 모델이 초기화되지 않았습니다. API 키 설정을 먼저 해주세요.")
 else:
     if df_ci is None or df_ci.empty:
-        st.info("먼저 CSV/XLSX를 업로드하고 CI를 계산해야 결과보고서를 생성할 수 있습니다.")
+        st.info("먼저 CSV/XLSX를 업로드하고 CI를 계산해야 결과보고서를 확인할 수 있습니다.")
     else:
-        if st.button("📄 Gemini로 결과보고서 생성"):
-            with st.spinner("Gemini가 보고서를 작성하는 중입니다..."):
-                report_text = generate_report_gemini(model, df_ci)
-            st.markdown("#### 📄 결과보고서 (AI 생성)")
-            st.write(report_text)
+        # 자동 생성 (최초 1회만 Gemini 호출)
+        if st.session_state["report_text"] is None:
+            with st.spinner("Gemini가 결과보고서를 작성하는 중입니다..."):
+                st.session_state["report_text"] = generate_report_gemini(model, df_ci)
+
+        st.markdown("#### 📄 결과보고서 (AI 자동 생성)")
+        st.write(st.session_state["report_text"])
 
 # ---------- 챗봇 ----------
-
 st.markdown("---")
-st.subheader("4️⃣ Gemini 챗봇 (결과 관련 질문)")
+st.subheader("💬 Gemini 챗봇 (결과 관련 질문)")
 
 init_chat_state()
 
 if model is None:
     st.warning("Gemini 모델이 초기화되지 않았습니다. API 키 설정을 먼저 해주세요.")
 else:
+    # 기존 대화 표시 (버블 형태)
     for h in st.session_state["chat_history"]:
-        if h["role"] == "user":
-            st.markdown(f"**👤 사용자:** {h['content']}")
-        else:
-            st.markdown(f"**🤖 AI:** {h['content']}")
+        role = "user" if h["role"] == "user" else "assistant"
+        with st.chat_message(role):
+            st.markdown(h["content"])
 
-    user_input = st.text_input("질문을 입력하세요. (예: CI가 뭐야?, 판정불가는 어떤 의미야?)")
-
+    # 사용자 입력
+    user_input = st.chat_input("CI, Rank, 판정불가 의미나 결과 해석 등 궁금한 점을 물어보세요.")
     if user_input:
-        st.session_state["chat_history"].append(
-            {"role": "user", "content": user_input}
-        )
-        with st.spinner("AI가 답변을 작성 중입니다..."):
-            answer = chat_with_gemini(model, user_input, df_ci)
+        # 세션 히스토리에 추가 + 화면 표시
+        st.session_state["chat_history"].append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        # Gemini 답변
+        with st.chat_message("assistant"):
+            with st.spinner("AI가 답변을 작성 중입니다..."):
+                answer = chat_with_gemini(model, user_input, df_ci)
+                st.markdown(answer)
+
         st.session_state["chat_history"].append(
             {"role": "assistant", "content": answer}
         )
