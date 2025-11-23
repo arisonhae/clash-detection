@@ -5,7 +5,6 @@ import pandas as pd
 import streamlit as st
 import google.generativeai as genai
 
-
 # ======================================
 # 0. 기본 설정
 # ======================================
@@ -13,7 +12,7 @@ import google.generativeai as genai
 st.set_page_config(
     page_title="AI Clash Agent (CI Ranking)",
     page_icon="🧱",
-    layout="wide",
+    layout="wide"
 )
 
 st.title("🧱 AI Clash Agent (CI Ranking + Gemini Report)")
@@ -21,17 +20,16 @@ st.title("🧱 AI Clash Agent (CI Ranking + Gemini Report)")
 st.markdown(
     """
 업로드한 Clash CSV/XLSX를 기반으로 **간섭 중요도(CI)**를 계산하고,
-
 - 우선 수정해야 할 간섭 순위(Rank)를 산출합니다.  
 - Top 10 + 판정불가 항목을 **Gemini 결과보고서**로 요약합니다.  
 - 아래 챗봇에서 결과 관련 질문도 할 수 있습니다.
 """
 )
 
-
 # ======================================
 # 1. 타입 판별 함수 (MEP / 구조)
 # ======================================
+
 
 def detect_mep_type(s: str) -> str:
     """MEP 항목 ID/유형 문자열에서 MEP 타입 분류"""
@@ -75,6 +73,7 @@ def detect_struct_type(s: str) -> str:
 # 2. 가중치 함수
 # ======================================
 
+
 def ws_from_struct(st_type: str) -> float:
     """
     구조 요소 가중치 (WS) - BWM 기반 값 예시
@@ -116,6 +115,7 @@ def w_mep_from_type(mep_type: str) -> float:
 # ======================================
 # 3. CI 계산 함수
 # ======================================
+
 
 def compute_ci(
     df: pd.DataFrame,
@@ -207,7 +207,9 @@ def compute_ci(
 
     # 10) 판정불가 여부 (타입을 제대로 분류 못한 경우)
     df["판정결과"] = "판정가능"
-    mask_unknown = (df["MEP_Type"] == "OtherMEP") | (df["ST_Type"] == "OtherStruct")
+    mask_unknown = (df["MEP_Type"] == "OtherMEP") | (
+        df["ST_Type"] == "OtherStruct"
+    )
     df.loc[mask_unknown, "판정결과"] = "판정불가"
 
     # 11) 보고서/표시에 쓸 alias 컬럼 (사람이 보기 좋은 이름)
@@ -229,43 +231,83 @@ def compute_ci(
 # 4. Gemini 설정 함수
 # ======================================
 
-GEMINI_MODEL_NAME = "gemini-1.5-flash"  # 한 모델만 사용 (안정적)
+PREFERRED_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+]
 
 
 def init_gemini():
-    """Secrets의 GEMINI_API_KEY를 사용해 Gemini 모델을 초기화."""
-    api_key = None
-    # 1) 새 형식(GEMINI_API_KEY) 먼저 확인
-    if "GEMINI_API_KEY" in st.secrets:
-        api_key = st.secrets["GEMINI_API_KEY"]
-    # 2) 혹시 예전 형식([google].api_key)이 남아 있을 수도 있으니 보조 체크
-    elif "google" in st.secrets and "api_key" in st.secrets["google"]:
-        api_key = st.secrets["google"]["api_key"]
+    """
+    Streamlit secrets의 GEMINI_API_KEY를 사용해 Gemini 모델을 초기화.
+    - 가능한 경우 list_models()로 사용 가능한 모델 목록을 조회한 뒤,
+      PREFERRED_MODELS 순서대로 선택.
+    """
+    api_key = st.secrets.get("GEMINI_API_KEY")
 
     if not api_key:
-        st.sidebar.error("⚠️ GEMINI_API_KEY가 설정되지 않았습니다. Secrets를 확인해주세요.")
+        st.sidebar.error(
+            "⚠️ GEMINI_API_KEY가 설정되지 않았습니다. Streamlit Secrets를 확인해주세요."
+        )
         return None
 
+    # 디버그용 (키 앞부분 & 라이브러리 버전 표시)
     st.sidebar.markdown(f"🔑 Gemini key prefix: `{api_key[:6]}***`")
     st.sidebar.markdown(f"📦 google-generativeai 버전: `{genai.__version__}`")
 
-    # 라이브러리 설정
     genai.configure(api_key=api_key)
 
+    # 1) 먼저 list_models()로 사용가능한 모델 조회
+    available_names = []
     try:
-        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-        # 간단한 테스트 호출 (실패하면 except로)
-        _ = model.generate_content("연결 테스트 한 줄만 답해줘.")
-        st.sidebar.success(f"✅ Gemini 연결 성공 (사용 모델: `{GEMINI_MODEL_NAME}`)")
-        return model
+        models = list(genai.list_models())
+        for m in models:
+            methods = getattr(m, "supported_generation_methods", [])
+            if "generateContent" in methods:
+                available_names.append(m.name)
+        if available_names:
+            st.sidebar.markdown("✅ 사용 가능한 모델(일부):")
+            for n in available_names[:5]:
+                st.sidebar.markdown(f"- `{n}`")
     except Exception as e:
-        st.sidebar.error(f"❌ Gemini 모델 초기화 실패: {e}")
-        return None
+        st.sidebar.warning(f"⚠️ list_models 호출 실패, 고정 모델명으로 시도합니다: {e}")
+
+    # 2) 실제로 사용할 모델명 선택
+    candidate_names = []
+
+    # list_models() 결과에서 먼저 찾기
+    if available_names:
+        for pref in PREFERRED_MODELS:
+            for an in available_names:
+                # m.name은 "models/gemini-2.5-flash" 이런 식이라서 뒤쪽만 비교
+                if an.endswith(pref):
+                    candidate_names.append(an.replace("models/", ""))
+                    break
+
+    # list_models()가 실패했거나, 원하는 이름이 없으면 기본 후보 사용
+    if not candidate_names:
+        candidate_names = PREFERRED_MODELS[:]
+
+    last_error = None
+    for name in candidate_names:
+        try:
+            model = genai.GenerativeModel(name)
+            _ = model.generate_content("테스트입니다. 한 줄만 답해줘.")
+            st.sidebar.success(f"✅ Gemini 연결 성공 (사용 모델: `{name}`)")
+            st.session_state["gemini_model_name"] = name
+            return model
+        except Exception as e:
+            last_error = e
+
+    st.sidebar.error(f"❌ Gemini 모델 초기화 실패: {last_error}")
+    return None
 
 
 # ======================================
 # 5. Gemini 결과보고서 생성
 # ======================================
+
 
 def generate_report_gemini(model, df_ci: pd.DataFrame) -> str:
     """
@@ -299,7 +341,9 @@ def generate_report_gemini(model, df_ci: pd.DataFrame) -> str:
     unknown_rows = df_ci[df_ci["판정결과"] == "판정불가"][cols_for_report]
 
     top10_md = top10_small.to_markdown(index=False)
-    unknown_md = unknown_rows.to_markdown(index=False) if not unknown_rows.empty else "없음"
+    unknown_md = (
+        unknown_rows.to_markdown(index=False) if not unknown_rows.empty else "없음"
+    )
 
     prompt = f"""
 너는 건설/BIM 간섭 검토를 돕는 엔지니어야.
@@ -331,9 +375,10 @@ def generate_report_gemini(model, df_ci: pd.DataFrame) -> str:
 # 6. Gemini 챗봇
 # ======================================
 
+
 def init_chat_state():
     if "chat_history" not in st.session_state:
-        st.session_state["chat_history"] = []  # list of {"role": "user"/"assistant", "content": str}
+        st.session_state["chat_history"] = []  # list of dict(role, content)
 
 
 def chat_with_gemini(model, user_msg: str, df_ci: pd.DataFrame | None):
@@ -345,7 +390,14 @@ def chat_with_gemini(model, user_msg: str, df_ci: pd.DataFrame | None):
     context = ""
     if df_ci is not None and not df_ci.empty:
         top5 = df_ci.head(5).copy()
-        cols = ["CI_rank", "간섭 이름", "MEP 항목 ID", "ST 항목 ID", "판정결과", "CI"]
+        cols = [
+            "CI_rank",
+            "간섭 이름",
+            "MEP 항목 ID",
+            "ST 항목 ID",
+            "판정결과",
+            "CI",
+        ]
         cols = [c for c in cols if c in top5.columns]
         context = top5[cols].to_markdown(index=False)
 
@@ -381,8 +433,7 @@ def chat_with_gemini(model, user_msg: str, df_ci: pd.DataFrame | None):
 st.sidebar.header("📂 입력 데이터 업로드")
 
 uploaded_file = st.sidebar.file_uploader(
-    "Clash 결과 CSV/XLSX 파일을 업로드하세요",
-    type=["csv", "xlsx"],
+    "Clash 결과 CSV/XLSX 파일을 업로드하세요", type=["csv", "xlsx"]
 )
 
 p_min_threshold = st.sidebar.number_input(
@@ -457,10 +508,8 @@ if uploaded_file is not None:
             st.error(f"CI 계산에 필요한 컬럼이 없습니다: {e}")
         except Exception as e:
             st.error(f"CI 계산 중 오류가 발생했습니다: {e}")
-
 else:
     st.info("좌측에서 Clash CSV/XLSX 파일을 업로드하면 CI 계산을 시작할 수 있습니다.")
-
 
 # ---------- Gemini 모델 초기화 ----------
 model = init_gemini()
@@ -481,7 +530,6 @@ else:
             st.markdown("#### 📄 결과보고서 (AI 생성)")
             st.write(report_text)
 
-
 # ---------- 챗봇 ----------
 st.markdown("---")
 st.subheader("4️⃣ Gemini 챗봇 (결과 관련 질문)")
@@ -491,7 +539,6 @@ init_chat_state()
 if model is None:
     st.warning("Gemini 모델이 초기화되지 않았습니다. API 키 설정을 먼저 해주세요.")
 else:
-    # 기존 대화 출력
     for h in st.session_state["chat_history"]:
         if h["role"] == "user":
             st.markdown(f"**👤 사용자:** {h['content']}")
@@ -501,8 +548,12 @@ else:
     user_input = st.text_input("질문을 입력하세요. (예: CI가 뭐야?, 판정불가는 어떤 의미야?)")
 
     if user_input:
-        st.session_state["chat_history"].append({"role": "user", "content": user_input})
+        st.session_state["chat_history"].append(
+            {"role": "user", "content": user_input}
+        )
         with st.spinner("AI가 답변을 작성 중입니다..."):
             answer = chat_with_gemini(model, user_input, df_ci)
-        st.session_state["chat_history"].append({"role": "assistant", "content": answer})
-        # rerun 없이도 새 메시지는 바로 위에 표시되므로 굳이 st.rerun()을 호출하지 않음
+        st.session_state["chat_history"].append(
+            {"role": "assistant", "content": answer}
+        )
+        st.experimental_rerun()
