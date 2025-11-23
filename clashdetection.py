@@ -546,7 +546,7 @@ model = init_gemini()
 
 # ---------- 결과보고서 ----------
 st.markdown("---")
-st.subheader("📊 Gemini 결과보고서 (Top 10 + 판정불가 포함)")
+st.subheader("🤖 Gemini 결과보고서")
 
 if model is None:
     st.warning("Gemini 모델이 초기화되지 않았습니다. API 키 설정을 먼저 해주세요.")
