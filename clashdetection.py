@@ -531,6 +531,7 @@ else:
             st.write(report_text)
 
 # ---------- 챗봇 ----------
+
 st.markdown("---")
 st.subheader("4️⃣ Gemini 챗봇 (결과 관련 질문)")
 
@@ -556,4 +557,3 @@ else:
         st.session_state["chat_history"].append(
             {"role": "assistant", "content": answer}
         )
-        st.experimental_rerun()
