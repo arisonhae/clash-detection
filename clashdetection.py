@@ -30,24 +30,44 @@ st.markdown(
     """
 ### 🔎 CI 계산 공식 및 의미
 
-이 웹은 Bitaraf et al. (Buildings, 2024)의 BIM 기반 간섭 우선순위 산정 방법을 참고하여  
+이 웹앱은 Bitaraf et al. (Buildings, 2024)의 **개선된 BIM 기반 간섭 우선순위 산정 방법**을 참고하여  
 아래와 같은 CI(Clash Importance) 공식을 사용합니다.
 
-> CI = P × WS × WMEP × N × R × U
+> **CI = P × WS × WMEP × N × R × U**
 
-- P : Clash 결과에서 가져온 **간섭 깊이(침투량)**  
-- WS : 기둥, 보, 기초, 전단벽, 슬래브 등 **구조 요소 가중치**  
-- WMEP : 덕트, 설비, 배관, 전기설비 등 **MEP 요소 가중치**  
+- **P** : Clash 결과에서 가져온 **간섭 깊이(침투량)**  
+- **WS** : 기둥, 보, 기초, 전단벽, 슬래브 등 **구조 요소 가중치**  
+- **WMEP** : 덕트, 설비, 배관, 전기설비 등 **MEP 요소 가중치**  
   - WS, WMEP 값의 구조는 논문에서 제시한 **BWM(Best–Worst Method) 기반 가중치 체계**를 따릅니다.
-- N : 동일 MEP 요소가 발생시키는 **간섭 개수**  
-- R : 층별 간섭 밀도 비율(해당 층 간섭 수 / 최다 층 간섭 수)  
-- U : 용도 계수 (현재는 1.0으로 고정)
+- **N** : 동일 MEP 요소가 발생시키는 **간섭 개수**  
+- **R** : 층별 간섭 밀도 비율(해당 층 간섭 수 / 최다 층 간섭 수)  
+- **U** : 용도 계수 (현재는 1.0으로 고정)
 
 논문의 기본 공식을 그대로 사용하되,  
-N · R · U 세 변수의 구체적인 정의와 계산 방식은 이 웹앱에서 업로드한 Clash 테이블만으로 계산할 수 있도록  
-독자적으로 단순화·재구성한 버전이라는 점을 함께 참고해 주세요.
+**N · R · U 세 변수의 구체적인 정의와 계산 방식은 이 웹앱에서 업로드한 Clash 테이블만으로 계산할 수 있도록  
+독자적으로 단순화·재구성한 버전**이라는 점을 함께 참고해 주세요.
 """
 )
+
+# ======================================
+# 0-1. 가중치 기본값 (WS / WMEP) 🔹추가
+# ======================================
+
+DEFAULT_WS = {
+    "Column": 0.321,
+    "Beam": 0.321,
+    "Pile": 0.188,
+    "Wall": 0.125,
+    "Slab": 0.045,
+}
+
+DEFAULT_WMEP = {
+    "DuctSegment": 0.54,
+    "AirTerminal": 0.28,
+    "PipeSegment": 0.12,
+    "Other": 0.06,  # CableTray, 기타 등
+}
+
 
 # ======================================
 # 1. 타입 판별 함수 (MEP / 구조)
@@ -99,40 +119,32 @@ def detect_struct_type(s: str) -> str:
 
 def ws_from_struct(st_type: str) -> float:
     """
-    구조 요소 가중치 (WS) - BWM 기반 값 예시
+    구조 요소 가중치 (WS) - BWM 기반 기본값
     Column / Beam = 0.321
     Pile(Foundation) = 0.188
     Wall(Shearwall/Brace) = 0.125
     Slab/Roof = 0.045
     기타는 보수적으로 Slab 수준
     """
-    if st_type == "Column":
-        return 0.321
-    if st_type == "Beam":
-        return 0.321
-    if st_type == "Pile":
-        return 0.188
-    if st_type == "Wall":
-        return 0.125
-    if st_type == "Slab":
-        return 0.045
+    # 🔹 세션에 저장된 가중치 사용 (없으면 기본값)
+    ws_dict = st.session_state.get("WS_weights", DEFAULT_WS)
+    if st_type in ws_dict:
+        return ws_dict[st_type]
     # 기타 구조
-    return 0.045
+    return ws_dict.get("Slab", 0.045)
 
 
 def w_mep_from_type(mep_type: str) -> float:
     """
-    MEP 요소 가중치 (WMEP) - 예시 값
+    MEP 요소 가중치 (WMEP) - 기본값
     Duct > AirTerminal > Pipe > Others
     """
-    if mep_type == "DuctSegment":
-        return 0.54
-    if mep_type == "AirTerminal":
-        return 0.28
-    if mep_type == "PipeSegment":
-        return 0.12
+    # 🔹 세션에 저장된 가중치 사용 (없으면 기본값)
+    wmep_dict = st.session_state.get("WMEP_weights", DEFAULT_WMEP)
+    if mep_type in wmep_dict:
+        return wmep_dict[mep_type]
     # CableTray, 기타 등
-    return 0.06
+    return wmep_dict.get("Other", 0.06)
 
 
 # ======================================
@@ -463,6 +475,46 @@ uploaded_file = st.sidebar.file_uploader(
     "Clash 결과 CSV/XLSX 파일을 업로드하세요", type=["csv", "xlsx"]
 )
 
+# 🔹 가중치 설정 UI (WS / WMEP) - P 최소 간섭 깊이 기준 위에 추가
+st.sidebar.markdown("---")
+st.sidebar.markdown("⚖️ **가중치 설정 (선택)**")
+st.sidebar.caption(
+    "기본값은 논문 예시 기반으로 설정되어 있으며,\n"
+    "원하면 구조(WS) / MEP(WMEP) 가중치를 조정해 CI를 다시 계산할 수 있습니다."
+)
+
+# 세션에 기본 가중치 초기화
+if "WS_weights" not in st.session_state:
+    st.session_state["WS_weights"] = DEFAULT_WS.copy()
+if "WMEP_weights" not in st.session_state:
+    st.session_state["WMEP_weights"] = DEFAULT_WMEP.copy()
+
+# 구조 요소 가중치
+st.sidebar.markdown("**WS : 구조 요소 가중치**")
+for st_type, default_val in DEFAULT_WS.items():
+    st.session_state["WS_weights"][st_type] = st.sidebar.number_input(
+        f"{st_type} (WS)",
+        min_value=0.0,
+        max_value=1.0,
+        value=float(st.session_state["WS_weights"][st_type]),
+        step=0.01,
+        key=f"ws_{st_type}",
+    )
+
+# MEP 요소 가중치
+st.sidebar.markdown("**WMEP : MEP 요소 가중치**")
+for mep_type, default_val in DEFAULT_WMEP.items():
+    label_name = mep_type if mep_type != "Other" else "Other / 기타 (WMEP)"
+    st.session_state["WMEP_weights"][mep_type] = st.sidebar.number_input(
+        f"{label_name}",
+        min_value=0.0,
+        max_value=1.0,
+        value=float(st.session_state["WMEP_weights"][mep_type]),
+        step=0.01,
+        key=f"wmep_{mep_type}",
+    )
+
+# 🔹 기존 위치 그대로 유지: P 최소 간섭 깊이 기준
 p_min_threshold = st.sidebar.number_input(
     "P 최소 간섭 깊이 기준 (선택, 0이면 사용 안 함)",
     min_value=0.0,
