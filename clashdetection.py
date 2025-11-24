@@ -50,7 +50,7 @@ st.markdown(
 )
 
 # ======================================
-# 0-1. 가중치 기본값 (WS / WMEP) 🔹추가
+# 0-1. 논문 기반 기본 가중치 (Figure 3, 4)  🔹추가
 # ======================================
 
 DEFAULT_WS = {
@@ -62,12 +62,11 @@ DEFAULT_WS = {
 }
 
 DEFAULT_WMEP = {
-    "DuctSegment": 0.54,
-    "AirTerminal": 0.28,
-    "PipeSegment": 0.12,
-    "Other": 0.06,  # CableTray, 기타 등
+    "DuctSegment": 0.437,
+    "AirTerminal": 0.246,
+    "PipeSegment": 0.164,  # Pipe(by gravity 기준)
+    "Other": 0.055,        # Electrical 및 기타
 }
-
 
 # ======================================
 # 1. 타입 판별 함수 (MEP / 구조)
@@ -119,14 +118,14 @@ def detect_struct_type(s: str) -> str:
 
 def ws_from_struct(st_type: str) -> float:
     """
-    구조 요소 가중치 (WS) - BWM 기반 기본값
+    구조 요소 가중치 (WS) - BWM 기반 값 예시
     Column / Beam = 0.321
     Pile(Foundation) = 0.188
     Wall(Shearwall/Brace) = 0.125
     Slab/Roof = 0.045
     기타는 보수적으로 Slab 수준
     """
-    # 🔹 세션에 저장된 가중치 사용 (없으면 기본값)
+    # 🔹 세션 상태에 저장된 값 사용 (없으면 DEFAULT_WS)
     ws_dict = st.session_state.get("WS_weights", DEFAULT_WS)
     if st_type in ws_dict:
         return ws_dict[st_type]
@@ -136,15 +135,15 @@ def ws_from_struct(st_type: str) -> float:
 
 def w_mep_from_type(mep_type: str) -> float:
     """
-    MEP 요소 가중치 (WMEP) - 기본값
-    Duct > AirTerminal > Pipe > Others
+    MEP 요소 가중치 (WMEP) - 논문 기반 기본값
+    Duct > Mechanical(AirTerminal) > Pipe > Electrical/기타
     """
-    # 🔹 세션에 저장된 가중치 사용 (없으면 기본값)
+    # 🔹 세션 상태에 저장된 값 사용 (없으면 DEFAULT_WMEP)
     wmep_dict = st.session_state.get("WMEP_weights", DEFAULT_WMEP)
     if mep_type in wmep_dict:
         return wmep_dict[mep_type]
     # CableTray, 기타 등
-    return wmep_dict.get("Other", 0.06)
+    return wmep_dict.get("Other", 0.055)
 
 
 # ======================================
@@ -475,11 +474,11 @@ uploaded_file = st.sidebar.file_uploader(
     "Clash 결과 CSV/XLSX 파일을 업로드하세요", type=["csv", "xlsx"]
 )
 
-# 🔹 가중치 설정 UI (WS / WMEP) - P 최소 간섭 깊이 기준 위에 추가
+# 🔹 WS/WMEP 가중치 설정 UI (P 기준 입력 위에 추가)
 st.sidebar.markdown("---")
 st.sidebar.markdown("⚖️ **가중치 설정 (선택)**")
 st.sidebar.caption(
-    "기본값은 논문 예시 기반으로 설정되어 있으며,\n"
+    "기본값은 Bitaraf et al. (Buildings, 2024) 논문 기반 값입니다.\n"
     "원하면 구조(WS) / MEP(WMEP) 가중치를 조정해 CI를 다시 계산할 수 있습니다."
 )
 
@@ -514,7 +513,7 @@ for mep_type, default_val in DEFAULT_WMEP.items():
         key=f"wmep_{mep_type}",
     )
 
-# 🔹 기존 위치 그대로 유지: P 최소 간섭 깊이 기준
+# 🔹 기존 P 최소 기준 입력 그대로 유지
 p_min_threshold = st.sidebar.number_input(
     "P 최소 간섭 깊이 기준 (선택, 0이면 사용 안 함)",
     min_value=0.0,
@@ -646,3 +645,5 @@ else:
         st.session_state["chat_history"].append(
             {"role": "assistant", "content": answer}
         )
+
+
